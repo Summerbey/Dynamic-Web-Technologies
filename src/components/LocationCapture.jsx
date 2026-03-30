@@ -18,41 +18,65 @@ export default function LocationCapture({ location, onLocationCapture }) {
     setLoading(true);
     setError('');
 
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude, accuracy } = position.coords;
+    // Success handler — shared by both high-accuracy and fallback attempts
+    const onSuccess = async (position) => {
+      const { latitude, longitude, accuracy } = position.coords;
 
-        // Attempt reverse geocoding with Nominatim (OpenStreetMap, no API key needed)
-        let address = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
-        try {
-          const res = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`,
-            { headers: { 'Accept-Language': 'en' } }
-          );
-          if (res.ok) {
-            const data = await res.json();
-            if (data.display_name) {
-              address = data.display_name;
-            }
+      // Attempt reverse geocoding with Nominatim (OpenStreetMap, no API key needed)
+      let address = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`,
+          {
+            headers: {
+              'Accept-Language': 'en',
+              'User-Agent': 'LocationJournalApp/1.0',
+            },
+            signal: controller.signal,
           }
-        } catch {
-          // Geocoding failed — fall back to raw coordinates
+        );
+        clearTimeout(timer);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.display_name) address = data.display_name;
         }
+      } catch {
+        // Geocoding failed — coordinates already set as fallback address
+      }
 
-        onLocationCapture({ lat: latitude, lng: longitude, accuracy, address });
-        setLoading(false);
-      },
-      (err) => {
-        const messages = {
-          1: 'Location access denied. Please allow location permissions.',
-          2: 'Location unavailable. Try again.',
-          3: 'Location request timed out. Try again.',
-        };
-        setError(messages[err.code] || 'Could not get location.');
-        setLoading(false);
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-    );
+      onLocationCapture({ lat: latitude, lng: longitude, accuracy, address });
+      setLoading(false);
+    };
+
+    const onError = (err) => {
+      // If high-accuracy times out (code 3), retry once with low-accuracy
+      if (err.code === 3) {
+        navigator.geolocation.getCurrentPosition(
+          onSuccess,
+          () => {
+            setError('Location unavailable. Make sure location is enabled on your device.');
+            setLoading(false);
+          },
+          { enableHighAccuracy: false, timeout: 15000, maximumAge: 30000 }
+        );
+        return;
+      }
+      const messages = {
+        1: 'Location access denied. Please allow location permissions in your browser settings.',
+        2: 'Location unavailable. Make sure location is enabled on your device.',
+      };
+      setError(messages[err.code] || 'Could not get location. Please try again.');
+      setLoading(false);
+    };
+
+    // First try: high accuracy (GPS), 15 second timeout
+    navigator.geolocation.getCurrentPosition(onSuccess, onError, {
+      enableHighAccuracy: true,
+      timeout: 15000,
+      maximumAge: 0,
+    });
   };
 
   const clearLocation = () => {

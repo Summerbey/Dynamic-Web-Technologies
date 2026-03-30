@@ -116,7 +116,6 @@ export default function CameraCapture({ onCapture, currentPhoto }) {
             <input
               type="file"
               accept="image/*"
-              capture="environment"
               onChange={handleFilePick}
               style={{ display: 'none' }}
             />
